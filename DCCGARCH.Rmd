@@ -1,0 +1,188 @@
+---
+title: "DCC GARCH model use In Stock price"
+author: "R.A.Janith Santhush(s16358)"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tseries)
+library(rugarch)
+library(rmgarch)
+library(knitr)
+# Remove the setwd() line
+#setwd("/Users/janithsanthush/Desktop/R Programming")
+
+
+# Load necessary library
+library(readr)
+
+# Read in the CSV file
+dat <- read_csv("stock_market_price.csv")
+
+# Check the data structure to ensure columns are numeric
+str(dat)
+
+# Convert columns to numeric if they are not already
+dat$TM <- as.numeric(dat$TM)
+dat$SHELL <- as.numeric(dat$SHELL)
+dat$AAPL <- as.numeric(dat$AAPL)
+
+# Check for NA values introduced during conversion
+sum_na_shell <- sum(is.na(dat$SHELL))
+sum_na_tm <- sum(is.na(dat$TM))
+sum_na_aapl <- sum(is.na(dat$AAPL))
+
+# Optionally, print the number of NA values
+cat("Number of NA values in SHELL:", sum_na_shell, "\n")
+cat("Number of NA values in TM:", sum_na_tm, "\n")
+cat("Number of NA values in AAPL:", sum_na_aapl, "\n")
+
+# Remove rows with NA in any of the relevant columns
+dat <- dat[!is.na(dat$SHELL) & !is.na(dat$TM) & !is.na(dat$AAPL), ]
+
+# Calculate log returns for the stocks
+rtm <- diff(log(dat$TM))
+rshell <- diff(log(dat$SHELL))
+raaple <- diff(log(dat$AAPL))
+```
+
+## Introduction
+
+We are analyzing three types of stock prices by constructing a DCC GARCH model to assess the relationships between these variables and investigate whether one variable influences the others. The data, which includes daily share prices from 8/28/2020 to 8/27/2024 for Apple Inc. (AAPL) representing Technology in the United States, Royal Dutch Shell plc (SHEL) for Energy in Europe, and Toyota Motor Corporation (TM) for Consumer Goods in Asia, will first be transformed into stationary data using logarithmic returns.
+
+```{r , Introduction}
+head(dat)
+tail(dat)
+```
+
+## Create Univariate GARCH Series
+
+According to the assumption of univariate model, a basic GARCH(1,1) model with normally distributed errors and no additional auto regressive or moving average components in the mean equation.
+
+```{r ,Create Univariate GARCH Series }
+model1 <- ugarchspec(mean.model = list(armaOrder = c(0, 0)),
+                     variance.model = list(garchOrder = c(1, 1), model = "sGARCH"),
+                     distribution.model = "norm")
+
+```
+
+## Spillover Effect of Apple and Toyota
+
+```{r spillover-effect, echo=TRUE}
+# Define the model specification for DCC GARCH
+modelspec <- dccspec(uspec = multispec(replicate(2, model1)),
+                     dccOrder = c(1, 1),
+                     distribution = "mvnorm")
+
+```
+
+# Combine the returns into a data frame
+
+```{r ,Combine the returns into a data frame}
+data <- data.frame(rtm, raaple)
+```
+
+# Fit the DCC GARCH model
+
+```{r ,Fit the DCC GARCH model}
+modelfit <- dccfit(modelspec, data = data)
+modelfit
+```
+
+## Interpret the model
+
+```{r ,Interpret the mode}
+summary(modelfit)
+```
+
+## Dynamic conditional correlation
+
+```{r ,Dynamic conditial correlation}
+dccforecast(modelfit,n.ahead = 5)
+```
+
+## Define model for Spillover Effect on all.
+
+```{r ,Define model for  Spillover Effect on all}
+model2 <- ugarchspec(mean.model = list(armaOrder = c(0, 0)),
+                     variance.model = list(garchOrder = c(1, 1), model = "sGARCH"),
+                     distribution.model = "norm")
+modelspec<- dccspec(uspec = multispec(replicate(3, model1)),
+                     dccOrder = c(1, 1),
+                     distribution = "mvnorm")
+
+data <- data.frame(rtm, raaple,rshell)
+modelfit2 <- dccfit(modelspec, data = data)
+modelfit2
+
+
+```
+
+## Dynamic conditional correlation to all type
+
+```{r ,Dynamic conditial correlation to all type}
+correlation=rcor(modelfit2);
+dim(correlation)
+correlation[,,dim(correlation)[3]]
+```
+
+## Plot the Correlation Graphs
+
+```{r Plot the Correlation Graphs, echo=TRUE}
+# Toyota and Apple
+cortm_raaple <- correlation[2, 1, ]
+# Toyota and Shell
+cortm_rshell <- correlation[3, 1, ]
+# Apple and Shell
+corshell_raaple <- correlation[3, 2, ]
+
+# Plot the correlation between Toyota and Apple
+plot(cortm_raaple, type = "l", col = "blue", lwd = 2, 
+     main = "Correlation between Toyota and Apple",
+     xlab = "Time", ylab = "Correlation")
+
+# Plot the correlation between Toyota and Shell
+plot(cortm_rshell, type = "l", col = "red", lwd = 2,
+     main = "Correlation between Toyota and Shell",
+     xlab = "Time", ylab = "Correlation")
+
+# Plot the correlation between Apple and Shell
+plot(corshell_raaple, type = "l", col = "green", lwd = 2,
+     main = "Correlation between Apple and Shell",
+     xlab = "Time", ylab = "Correlation")
+
+
+# Set up a two-panel plot layout
+par(mfrow = c(1, 1))
+
+# Calculate the y-axis limits to include all values from all three correlation datasets
+y_min <- min(c(cortm_raaple, cortm_rshell, corshell_raaple), na.rm = TRUE)
+y_max <- max(c(cortm_raaple, cortm_rshell, corshell_raaple), na.rm = TRUE)
+
+# Plot the correlation between Toyota and Apple as the initial plot, with adjusted ylim
+plot(cortm_raaple, type = "l", col = "blue", lwd = 2,
+     main = "Correlation between Toyota, Apple, and Shell",
+     xlab = "Time", ylab = "Correlation",
+     ylim = c(y_min, y_max))
+
+# Add the correlation between Toyota and Shell
+lines(cortm_rshell, type = "l", col = "red", lwd = 2)
+
+# Add the correlation between Apple and Shell
+lines(corshell_raaple, type = "l", col = "green", lwd = 2)
+
+# Add a legend to distinguish each line
+legend("topright", legend = c("Toyota & Apple", "Toyota & Shell", "Apple & Shell"),
+       col = c("blue", "red", "green"), lwd = 2)
+
+
+
+
+```
+
+
